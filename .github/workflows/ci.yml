@@ -20,6 +20,5 @@ jobs:
       - uses: DeLaGuardo/setup-clojure@12.5
         with:
           cli: 1.12.0.1530
-          cache: true
       # the integration suite starts its own postgres from compose.yaml
       - run: clojure -T:build test
