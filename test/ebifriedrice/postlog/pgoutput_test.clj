@@ -9,11 +9,14 @@
 
 (defn- msg
   "Encode segments to bytes: [:b byte] [:w int16] [:i int32] [:l int64]
-  [:s cstring] [:raw byte-array]."
+  [:s cstring] [:raw byte-array].  A segment may itself be a vector of
+  segments (one level of nesting), which keeps helpers like text-col
+  readable at call sites."
   [& segments]
   (let [baos (ByteArrayOutputStream.)]
     (with-open [out (DataOutputStream. baos)]
-      (doseq [[tag value] segments]
+      (doseq [segment segments
+              [tag value] (if (vector? (second segment)) segment [segment])]
         (case tag
           :b (.writeByte out (long value))
           :w (.writeShort out (long value))
@@ -112,6 +115,88 @@
             :restart-identity? false
             :relation-ids [16385]}
            (pg/decode (msg [:b \T] [:i 1] [:b 0] [:i 16385]))))))
+
+(defn- utf8 [s] (.getBytes s StandardCharsets/UTF_8))
+
+(defn- text-col
+  "Segments encoding one TupleData text column."
+  [s]
+  [[:b \t] [:i (alength (utf8 s))] [:raw (utf8 s)]])
+
+(deftest insert-test
+  (testing "Insert carries the new tuple: text, null, toast, binary values"
+    (is (= {:op :insert
+            :relation-id 16385
+            :tuple ["42" nil ::pg/unchanged-toast]}
+           (pg/decode (msg [:b \I]
+                           [:i 16385]
+                           [:b \N] [:w 3]
+                           (text-col "42")
+                           [:b \n]
+                           [:b \u])))))
+  (testing "binary tuple values come back as raw bytes"
+    (let [tuple (:tuple (pg/decode (msg [:b \I]
+                                           [:i 1]
+                                           [:b \N] [:w 1]
+                                           [:b \b] [:i 2] [:raw (utf8 "hi")])))]
+      (is (= 1 (count tuple)))
+      (is (java.util.Arrays/equals (utf8 "hi") (first tuple))))))
+
+(deftest update-test
+  (testing "no before tuple when no key column changed"
+    (is (= {:op :update
+            :relation-id 16385
+            :before-kind nil
+            :before-tuple nil
+            :tuple ["42" "new@x.io"]}
+           (pg/decode (msg [:b \U]
+                           [:i 16385]
+                           [:b \N] [:w 2]
+                           (text-col "42")
+                           (text-col "new@x.io"))))))
+  (testing "key-only before tuple when a replica-identity column changed"
+    (is (= {:op :update
+            :relation-id 16385
+            :before-kind :key
+            :before-tuple ["42"]
+            :tuple ["43" "new@x.io"]}
+           (pg/decode (msg [:b \U]
+                           [:i 16385]
+                           [:b \K] [:w 1] (text-col "42")
+                           [:b \N] [:w 2] (text-col "43") (text-col "new@x.io"))))))
+  (testing "full before tuple under replica identity full"
+    (is (= {:op :update
+            :relation-id 16385
+            :before-kind :old
+            :before-tuple ["42" "old@x.io"]
+            :tuple ["42" "new@x.io"]}
+           (pg/decode (msg [:b \U]
+                           [:i 16385]
+                           [:b \O] [:w 2] (text-col "42") (text-col "old@x.io")
+                           [:b \N] [:w 2] (text-col "42") (text-col "new@x.io")))))))
+
+(deftest delete-test
+  (testing "Delete carries a key-only or full before tuple, never a new one"
+    (is (= {:op :delete
+            :relation-id 16385
+            :before-kind :key
+            :before-tuple ["42"]}
+           (pg/decode (msg [:b \D]
+                           [:i 16385]
+                           [:b \K] [:w 1] (text-col "42")))))
+    (is (= {:op :delete
+            :relation-id 16385
+            :before-kind :old
+            :before-tuple ["42" "old@x.io"]}
+           (pg/decode (msg [:b \D]
+                           [:i 16385]
+                           [:b \O] [:w 2] (text-col "42") (text-col "old@x.io")))))))
+
+(deftest bad-tuple-tag-test
+  (testing "a new-tuple tag where a key is required fails loudly"
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo #"Unexpected tuple tag"
+         (pg/decode (msg [:b \D] [:i 1] [:b \N] [:w 0]))))))
 
 (deftest unsupported-and-truncated-test
   (testing "unknown type bytes are rejected with the byte in the error"

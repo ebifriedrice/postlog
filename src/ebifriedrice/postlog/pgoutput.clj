@@ -106,6 +106,22 @@
                             replica-identity replica-identity)
      :columns columns}))
 
+(def ^:private tuple-kinds
+  {\K :key \O :old \N :new})
+
+(defn- read-tagged-tuple
+  "Read a tuple type byte (K/O/N) and its TupleData.  `expected`
+  restricts which tags are legal at this position."
+  [^ByteBuffer b expected]
+  (let [tag (char (bit-and (.get b) 0xFF))]
+    (when-not (contains? expected tag)
+      (throw (ex-info "Unexpected tuple tag" {:tag tag :expected expected})))
+    (tuple-kinds tag)))
+
+(defn- peek-byte
+  [^ByteBuffer b]
+  (char (bit-and (.get b (.position b)) 0xFF)))
+
 (defn decode
   "Decode one pgoutput message from `payload` (bytes or ByteBuffer,
   positioned at the type byte) into a map with an ``:op`` keyword.
@@ -137,6 +153,26 @@
               :cascade? (bit-test flags 0)
               :restart-identity? (bit-test flags 1)
               :relation-ids (vec (repeatedly n #(uint32 b)))})
+        \I {:op :insert
+            :relation-id (uint32 b)
+            :tuple (do (read-tagged-tuple b #{\N})
+                       (read-tuple b))}
+        \U (let [relation-id (uint32 b)
+                 before? (contains? #{\K \O} (peek-byte b))
+                 before-kind (when before?
+                               (read-tagged-tuple b #{\K \O}))
+                 before-tuple (when before?
+                                (read-tuple b))]
+             (read-tagged-tuple b #{\N})
+             {:op :update
+              :relation-id relation-id
+              :before-kind before-kind
+              :before-tuple before-tuple
+              :tuple (read-tuple b)})
+        \D {:op :delete
+            :relation-id (uint32 b)
+            :before-kind (read-tagged-tuple b #{\K \O})
+            :before-tuple (read-tuple b)}
         \M (let [flags (bit-and (.get b) 0xFF)
                  lsn (.getLong b)
                  prefix (read-cstring b)
