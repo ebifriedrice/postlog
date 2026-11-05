@@ -119,26 +119,6 @@
   (testing "unknown array types keep the raw literal"
     (is (= "{x,y}" (decode/decode-value 999999 "{x,y}")))))
 
-(deftest decode-row-test
-  (let [columns [{:name "id" :type-oid 23}
-                 {:name "active" :type-oid 16}
-                 {:name "tags" :type-oid 1009}
-                 {:name "custom" :type-oid 999999}]]
-    (is (= {"id" 7
-            "active" true
-            "tags" ["a" "b"]
-            "custom" "whatever"
-            "extra" "raw"}
-           (decode/decode-row
-            columns
-            {"id" "7" "active" "t" "tags" "{a,b}"
-             "custom" "whatever" "extra" "raw"}))))
-  (testing "nulls and toast markers pass through rows untouched"
-    (is (= {"id" nil "body" ::pg/unchanged-toast}
-           (decode/decode-row
-            [{:name "id" :type-oid 23} {:name "body" :type-oid 25}]
-            {"id" nil "body" ::pg/unchanged-toast})))))
-
 (deftest passthrough-test
   (testing "unknown OIDs keep their raw text"
     (is (= "hello" (decode/decode-value 999999 "hello"))))

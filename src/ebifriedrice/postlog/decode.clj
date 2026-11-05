@@ -228,18 +228,9 @@
 (defn decode-value
   "Decode one text-format `value` using its column's `type-oid`.
   Non-string values pass through untouched; unknown OIDs keep the
-  raw text."
+  raw text.  This is the function to hand a consumer as
+  ``:value-decoder``."
   [type-oid value]
   (if (and (string? value) (contains? decoders type-oid))
     ((get decoders type-oid) value)
     value))
-
-(defn decode-row
-  "Decode a shaped row map (column name -> raw value) against the
-  relation's columns; values whose column is missing from `columns`
-  keep their raw text."
-  [columns row]
-  (let [oids (into {} (map (juxt :name :type-oid)) columns)]
-    (into {} (map (fn [[name value]]
-                    [name (decode-value (get oids name) value)]))
-          row)))
