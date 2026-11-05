@@ -88,10 +88,13 @@
     (with-open [rs (.executeQuery stmt)]
       (let [meta (.getMetaData rs)
             cols (mapv (fn [i] (keyword (str/lower-case (.getColumnName meta i))))
-                       (range 1 (inc (.getColumnCount meta))))]
+                       (range 1 (inc (.getColumnCount meta))))
+            idxs (range 1 (inc (count cols)))]
         (loop [rows []]
           (if (.next rs)
-            (recur (conj rows (zipmap cols (map #(.getObject rs ^int %) cols))))
+            (recur (conj rows (zipmap cols
+                                      (map (fn [i] (.getObject rs (int i)))
+                                           idxs))))
             rows))))))
 
 (defn- exec!
