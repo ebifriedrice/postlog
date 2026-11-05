@@ -40,14 +40,14 @@
           {:op :insert :relation-id 16385 :tuple ["1" nil ::pg/unchanged-toast]}))))
 
 (deftest shape-update-test
-  (testing "key-only before image zips against key columns only"
+  (testing "key-only before image picks key columns out of a full-width tuple"
     (is (= {:op :update :schema "public" :table "users"
             :before {"id" "1"}
             :after {"id" "1" "email" "new@x.io" "plan" "pro"}}
            (relations/shape-change
             cache
             {:op :update :relation-id 16385
-             :before-kind :key :before-tuple ["1"]
+             :before-kind :key :before-tuple ["1" nil nil]
              :tuple ["1" "new@x.io" "pro"]}))))
   (testing "no before image when no key column changed"
     (is (nil? (:before
@@ -72,7 +72,7 @@
          (relations/shape-change
           cache
           {:op :delete :relation-id 16385
-           :before-kind :key :before-tuple ["1"]}))))
+           :before-kind :key :before-tuple ["1" nil nil]}))))
 
 (deftest shape-truncate-test
   (is (= {:op :truncate :tables ["public.users"] :cascade? false :restart-identity? false}

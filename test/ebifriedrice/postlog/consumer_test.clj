@@ -38,7 +38,7 @@
 (def begin-42 (msg [:b \B] [:l 1000] [:l 1500000] [:i 42]))
 (def commit-1100 (msg [:b \C] [:b 0] [:l 1000] [:l 1100] [:l 1500000]))
 (def insert-7 (msg [:b \I] [:i 16385] [:b \N] [:w 2] (text-col "7") (text-col "x")))
-(def delete-7 (msg [:b \D] [:i 16385] [:b \K] [:w 1] (text-col "7")))
+(def delete-7 (msg [:b \D] [:i 16385] [:b \K] [:w 2] (text-col "7") [:b \n]))
 
 (defn start-consumer!
   "Consumer over a fresh fake stream; returns [consumer state-atom]."

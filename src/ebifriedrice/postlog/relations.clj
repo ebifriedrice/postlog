@@ -11,8 +11,9 @@
 
   Key-only before-images (updates that changed a replica-identity
   column, and deletes on tables without REPLICA IDENTITY FULL)
-  carry values for the key columns only, in relation column order
-  restricted to those columns; full tuples carry every column.
+  arrive full-width with NULL in every non-identity column; rows
+  below pick out the identity columns.  Full tuples carry every
+  column.
 
   Rows are maps from column name (string) to value, because column
   names come from the database and stay data here."
@@ -35,22 +36,31 @@
                        :known (sort (keys cache))}))))
 
 (defn- row
-  "Zip a tuple with the columns it carries values for: all columns for
-  full tuples, only key columns for key-only tuples.  `value-decoder`
-  (type-oid, value) -> value lets callers decode typed column values;
-  nil keeps whatever the decoder produced upstream."
+  "Zip a tuple with the columns it carries values for.  Full tuples
+  (:new, :old) carry every column; key-only tuples ('K') also arrive
+  at full relation width -- pgoutput NULLs the non-identity columns
+  -- so the key columns' positions are picked out of the full tuple.
+  `value-decoder` (type-oid, value) -> value lets callers decode
+  typed column values; nil keeps whatever the decoder produced
+  upstream."
   [relation kind tuple value-decoder]
-  (let [cols (if (= :key kind) (filter :key? (:columns relation)) (:columns relation))]
-    (when (not= (count cols) (count tuple))
+  (let [columns (:columns relation)
+        positions (if (= :key kind)
+                    (keep-indexed (fn [i col] (when (:key? col) i)) columns)
+                    (range (count columns)))]
+    (when (not= (count columns) (count tuple))
       (throw (ex-info "Tuple width does not match its relation"
-                      {:columns (mapv :name cols)
+                      {:columns (mapv :name columns)
                        :tuple tuple})))
-    (zipmap (map :name cols)
-            (map (fn [col value]
-                   (if (and value-decoder (string? value))
-                     (value-decoder (:type-oid col) value)
-                     value))
-                 cols tuple))))
+    (into {}
+          (map (fn [i]
+                 (let [col (nth columns i)
+                       v (nth tuple i)]
+                   [(:name col)
+                    (if (and value-decoder (string? v))
+                      (value-decoder (:type-oid col) v)
+                      v)])))
+          positions)))
 
 (defn shape-change
   "Reshape a decoded insert/update/delete/truncate message (resolved
