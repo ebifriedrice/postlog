@@ -48,12 +48,16 @@ the publication). Changes arrive as maps:
 {:op :truncate :tables ["public.users"] :cascade? false :restart-identity? false}
 ```
 
-Without `:value-decoder`, row values stay in Postgres' text format;
-`decode/decode-value` decodes built-in types (numbers, booleans,
-BigDecimal numerics, java.time temporals, bytea, arrays — unknown types
-keep their text). Set `:on-transaction` instead of (or alongside)
-`:on-change` to receive each commit as
-`{:xid .. :commit-lsn .. :commit-ts .. :changes [..]}`.
+Without `:value-decoder`, row values stay as they streamed: by default
+postlog requests the **binary** wire format (protocol version 2), so
+columns arrive in their type's binary layout — raw bytes for unknown
+types.  `decode/decode-value` (shown above) decodes both formats:
+numbers, booleans, BigDecimal numerics, java.time temporals, bytea,
+uuid, json/jsonb, and arrays.  Pass `:binary? false` to stream text
+renderings instead — useful for custom value-decoders that parse text,
+or when you prefer raw strings over raw bytes for types outside the
+table.  Set `:on-transaction` instead of (or alongside) `:on-change` to
+receive each commit as `{:xid .. :commit-lsn .. :commit-ts .. :changes [..]}`.
 
 ## Delivery semantics
 
