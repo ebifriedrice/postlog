@@ -16,7 +16,7 @@ or Debezium, sized as a library.
 
 ```clojure
 ;; deps.edn
-net.clojars.ebifriedrice/postlog {:mvn/version "0.1.0-SNAPSHOT"}
+net.clojars.ebifriedrice/postlog {:mvn/version "0.1.0"}
 ```
 
 ```clojure

@@ -2,6 +2,8 @@
 All notable changes to this project will be documented in this file. This change log follows the conventions of [keepachangelog.com](http://keepachangelog.com/).
 
 ## [Unreleased]
+
+## [0.1.0] - 2026-11-06
 ### Added
 - Project scaffold from the `clj-new` library template.
 - `ebifriedrice.postlog.lsn`: parse, format, and diff log sequence numbers.
@@ -28,3 +30,5 @@ All notable changes to this project will be documented in this file. This change
   boundaries, reconnect with backoff, graceful stop.
 - Integration suite against a self-managed Postgres 17 (docker compose
   with rootless-podman fallback; `POSTLOG_TEST_*` overrides).
+- GitHub Actions: tests on main and pull requests; releases publish to
+  Clojars when a `v*` tag is pushed.
