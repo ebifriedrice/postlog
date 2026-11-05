@@ -6,6 +6,11 @@
 
 (defn utf8 [s] (.getBytes s StandardCharsets/UTF_8))
 
+(defn- expand
+  "Splice nested segment groups into a flat seq of [tag value] pairs."
+  [segments]
+  (mapcat #(if (vector? (second %)) % [%]) segments))
+
 (defn msg
   "Encode segments to bytes: [:b byte] [:w int16] [:i int32] [:l int64]
   [:s cstring] [:raw byte-array].  A segment may itself be a vector of
@@ -14,8 +19,7 @@
   [& segments]
   (let [baos (ByteArrayOutputStream.)]
     (with-open [out (DataOutputStream. baos)]
-      (doseq [segment segments
-              [tag value] (if (vector? (second segment)) segment [segment])]
+      (doseq [[tag value] (expand segments)]
         (case tag
           :b (.writeByte out (long value))
           :w (.writeShort out (long value))
