@@ -88,6 +88,25 @@
           cache
           {:op :insert :relation-id 16385 :tuple ["1" "2"]})))))
 
+(deftest value-decoder-test
+  (testing "a value-decoder sees each column's type-oid and text value"
+    (is (= {:op :insert :schema "public" :table "users"
+            :after {"id" 7 "email" nil "plan" ::pg/unchanged-toast}}
+           (relations/shape-change
+            cache
+            {:op :insert :relation-id 16385
+             :tuple ["7" nil ::pg/unchanged-toast]}
+            {:value-decoder (fn [type-oid value]
+                              (if (and (= 23 type-oid) (string? value))
+                                (Long/parseLong value)
+                                value))}))))
+  (testing "without a decoder, text values pass through"
+    (is (= "7"
+           (get-in (relations/shape-change
+                    cache
+                    {:op :insert :relation-id 16385 :tuple ["7" nil nil]})
+                   [:after "id"])))))
+
 (deftest roundtrip-through-bytes
   (testing "shaping a change decoded from real bytes end to end"
     (let [rel (pg/decode (msg [:b \R]

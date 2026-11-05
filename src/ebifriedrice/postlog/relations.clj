@@ -36,14 +36,21 @@
 
 (defn- row
   "Zip a tuple with the columns it carries values for: all columns for
-  full tuples, only key columns for key-only tuples."
-  [{:keys [columns]} kind tuple]
-  (let [cols (if (= :key kind) (filter :key? columns) columns)]
+  full tuples, only key columns for key-only tuples.  `value-decoder`
+  (type-oid, value) -> value lets callers decode typed column values;
+  nil keeps whatever the decoder produced upstream."
+  [relation kind tuple value-decoder]
+  (let [cols (if (= :key kind) (filter :key? (:columns relation)) (:columns relation))]
     (when (not= (count cols) (count tuple))
       (throw (ex-info "Tuple width does not match its relation"
                       {:columns (mapv :name cols)
                        :tuple tuple})))
-    (zipmap (map :name cols) tuple)))
+    (zipmap (map :name cols)
+            (map (fn [col value]
+                   (if (and value-decoder (string? value))
+                     (value-decoder (:type-oid col) value)
+                     value))
+                 cols tuple))))
 
 (defn shape-change
   "Reshape a decoded insert/update/delete/truncate message (resolved
@@ -59,31 +66,38 @@
 
   `:before` is nil unless the server sent an old image; on default
   replica identity it holds key columns only.  TOASTed values the
-  server skipped appear as [[pg/unchanged-toast]]."
-  [cache change]
-  (case (:op change)
-    :insert (let [rel (resolve cache (:relation-id change))]
-              {:op :insert
-               :schema (:schema rel)
-               :table (:table rel)
-               :after (row rel :new (:tuple change))})
-    :update (let [rel (resolve cache (:relation-id change))]
-              {:op :update
-               :schema (:schema rel)
-               :table (:table rel)
-               :before (when-let [t (:before-tuple change)]
-                         (row rel (:before-kind change) t))
-               :after (row rel :new (:tuple change))})
-    :delete (let [rel (resolve cache (:relation-id change))]
-              {:op :delete
-               :schema (:schema rel)
-               :table (:table rel)
-               :before (row rel (:before-kind change) (:before-tuple change))})
-    :truncate {:op :truncate
-               :tables (mapv (fn [id]
-                               (let [rel (resolve cache id)]
-                                 (str (:schema rel) "." (:table rel))))
-                             (:relation-ids change))
-               :cascade? (:cascade? change)
-               :restart-identity? (:restart-identity? change)}
-    change))
+  server skipped appear as [[pg/unchanged-toast]].  `opts`:
+
+  :value-decoder  fn of a column's type-oid and its text value,
+                  returning the decoded value; strings pass through
+                  when absent.  Non-string values (nil, TOAST
+                  markers) are never passed to it."
+  ([cache change] (shape-change cache change nil))
+  ([cache change {:keys [value-decoder]}]
+   (let [row* (fn [rel kind tuple] (row rel kind tuple value-decoder))]
+     (case (:op change)
+       :insert (let [rel (resolve cache (:relation-id change))]
+                 {:op :insert
+                  :schema (:schema rel)
+                  :table (:table rel)
+                  :after (row* rel :new (:tuple change))})
+       :update (let [rel (resolve cache (:relation-id change))]
+                 {:op :update
+                  :schema (:schema rel)
+                  :table (:table rel)
+                  :before (when-let [t (:before-tuple change)]
+                            (row* rel (:before-kind change) t))
+                  :after (row* rel :new (:tuple change))})
+       :delete (let [rel (resolve cache (:relation-id change))]
+                 {:op :delete
+                  :schema (:schema rel)
+                  :table (:table rel)
+                  :before (row* rel (:before-kind change) (:before-tuple change))})
+       :truncate {:op :truncate
+                  :tables (mapv (fn [id]
+                                  (let [rel (resolve cache id)]
+                                    (str (:schema rel) "." (:table rel))))
+                                (:relation-ids change))
+                  :cascade? (:cascade? change)
+                  :restart-identity? (:restart-identity? change)}
+       change))))
