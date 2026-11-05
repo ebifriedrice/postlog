@@ -132,11 +132,15 @@
 ;; slots
 
 (defn- row->slot
+  "Normalize a slot row, keeping nil (no such slot) nil: update on a
+  nil row fabricates {:active false}, making a missing slot look
+  present to ensure-slot!."
   [row]
-  (-> row
-      (update :active boolean)
-      (update :restart_lsn #(some-> % lsn/parse))
-      (update :confirmed_flush_lsn #(some-> % lsn/parse))))
+  (when row
+    (-> row
+        (update :active boolean)
+        (update :restart_lsn #(some-> % lsn/parse))
+        (update :confirmed_flush_lsn #(some-> % lsn/parse)))))
 
 (defn- slot-query
   [where]
@@ -152,7 +156,7 @@
 (defn slot-info
   "The slot named `name`, or nil.  Shape as in [[slots]]."
   [conn name]
-  (row->slot (first (query conn (str (slot-query " WHERE slot_name = ?") "?") [name]))))
+  (row->slot (first (query conn (slot-query " WHERE slot_name = ?") [name]))))
 
 (defn slot-exists? [conn name]
   (boolean (seq (query conn "SELECT 1 FROM pg_replication_slots WHERE slot_name = ?" [name]))))
