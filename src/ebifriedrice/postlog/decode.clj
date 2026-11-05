@@ -7,7 +7,44 @@
   only by OID, so decoding is an OID-keyed lookup.  Values of unknown
   or custom types keep their raw text, and non-text values (NULL,
   unchanged-TOAST markers) pass through untouched."
-  (:import (java.math BigDecimal)))
+  (:require [clojure.string :as str])
+  (:import (java.math BigDecimal)
+           (java.time LocalDate LocalTime OffsetTime)
+           (java.time.format DateTimeParseException)))
+
+(def infinity
+  "Marker for date and timestamp values Postgres renders as
+  ``infinity``."
+  ::infinity)
+
+(def neg-infinity
+  "Marker for ``-infinity``."
+  ::neg-infinity)
+
+(defn- parse-or-raw
+  "Parse with `parse`, falling back to the raw text for values
+  java.time cannot represent (e.g. BC years)."
+  [parse s]
+  (try
+    (parse s)
+    (catch DateTimeParseException _ s)))
+
+(defn- parse-temporal
+  "Like parse-or-raw, but mapping Postgres' infinity spellings to
+  [[infinity]]/[[neg-infinity]]."
+  [parse s]
+  (case s
+    "infinity" infinity
+    "-infinity" neg-infinity
+    (parse-or-raw parse s)))
+
+(defn- pad-offset
+  "java.time rejects Postgres' hour-only offsets (``+00``); add :00."
+  [s]
+  (str/replace s #"[+-]\d{2}$" "$0:00"))
+
+(defn- parse-timetz [s]
+  (parse-or-raw OffsetTime/parse (pad-offset s)))
 
 (defn- parse-long* [^String s]
   (Long/parseLong s))
@@ -53,6 +90,9 @@
    700 parse-double*  ; float4
    701 parse-double*  ; float8
    17 parse-bytea
+   1082 (partial parse-temporal LocalDate/parse)  ; date
+   1083 (partial parse-or-raw LocalTime/parse)    ; time
+   1266 parse-timetz                              ; time with time zone
    1700 parse-numeric})
 
 (defn decode-value

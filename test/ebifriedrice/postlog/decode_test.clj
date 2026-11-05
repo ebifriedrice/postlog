@@ -1,7 +1,8 @@
 (ns ebifriedrice.postlog.decode-test
   (:require [clojure.test :refer [deftest is testing]]
             [ebifriedrice.postlog.decode :as decode]
-            [ebifriedrice.postlog.pgoutput :as pg]))
+            [ebifriedrice.postlog.pgoutput :as pg])
+  (:import (java.time LocalDate LocalTime OffsetTime ZoneOffset)))
 
 (deftest numbers-test
   (testing "integers and oid become Longs, floats Doubles"
@@ -33,6 +34,27 @@
     (is (thrown-with-msg?
          clojure.lang.ExceptionInfo #"not hex-escaped"
          (decode/decode-value 17 "abc\\000def")))))
+
+(deftest date-test
+  (is (= (LocalDate/of 2026 11 5)
+         (decode/decode-value 1082 "2026-11-05")))
+  (is (= decode/infinity (decode/decode-value 1082 "infinity")))
+  (is (= decode/neg-infinity (decode/decode-value 1082 "-infinity")))
+  (testing "values java.time cannot represent keep their text"
+    (is (= "0044-03-15 BC" (decode/decode-value 1082 "0044-03-15 BC")))))
+
+(deftest time-test
+  (is (= (LocalTime/of 12 34 56)
+         (decode/decode-value 1083 "12:34:56")))
+  (is (= (LocalTime/of 12 34 56 (* 789012 1000))
+         (decode/decode-value 1083 "12:34:56.789012"))))
+
+(deftest timetz-test
+  (is (= (OffsetTime/of (LocalTime/of 12 34 56) (ZoneOffset/ofHoursMinutes 1 30))
+         (decode/decode-value 1266 "12:34:56+01:30")))
+  (testing "hour-only offsets gain minutes"
+    (is (= (OffsetTime/of (LocalTime/of 12 34 56) (ZoneOffset/ofHours 1))
+           (decode/decode-value 1266 "12:34:56+01")))))
 
 (deftest passthrough-test
   (testing "unknown OIDs keep their raw text"
