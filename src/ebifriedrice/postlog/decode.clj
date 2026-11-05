@@ -26,6 +26,22 @@
     "f" false
     (throw (ex-info "Unknown boolean text" {:text s}))))
 
+(defn- hex->bytes
+  "Decode two hex digits per byte, as in bytea's ``\\x`` text format."
+  [^String hex]
+  (let [n (quot (count hex) 2)
+        out (byte-array n)]
+    (dotimes [i n]
+      (aset-byte out i
+                 (unchecked-byte
+                  (Integer/parseInt (.substring hex (* 2 i) (+ 2 (* 2 i))) 16))))
+    out))
+
+(defn- parse-bytea [^String s]
+  (if (.startsWith s "\\x")
+    (hex->bytes (.substring s 2))
+    (throw (ex-info "bytea text is not hex-escaped" {:text s}))))
+
 (def ^:private decoders
   "OID -> parser for built-in scalar types with an obvious Clojure
   equivalent."
@@ -36,6 +52,7 @@
    26 parse-long*     ; oid
    700 parse-double*  ; float4
    701 parse-double*  ; float8
+   17 parse-bytea
    1700 parse-numeric})
 
 (defn decode-value

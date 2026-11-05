@@ -23,6 +23,17 @@
        clojure.lang.ExceptionInfo #"Unknown boolean"
        (decode/decode-value 16 "x"))))
 
+(deftest bytea-test
+  (testing "hex-escaped bytea becomes a byte array"
+    (is (java.util.Arrays/equals (byte-array [0x48 0x65 0x6c 0x6c 0x6f])
+                                 (decode/decode-value 17 "\\x48656c6c6f")))
+    (is (java.util.Arrays/equals (byte-array 0)
+                                 (decode/decode-value 17 "\\x"))))
+  (testing "the legacy escape format is rejected loudly"
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo #"not hex-escaped"
+         (decode/decode-value 17 "abc\\000def")))))
+
 (deftest passthrough-test
   (testing "unknown OIDs keep their raw text"
     (is (= "hello" (decode/decode-value 999999 "hello"))))
