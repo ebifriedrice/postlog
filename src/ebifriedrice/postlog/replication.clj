@@ -55,15 +55,18 @@
   Opts:
   :slot-name          (required) the slot to consume
   :publications       (required) publication name(s), string or coll
-  :proto-version      pgoutput protocol version, default 1 (text
-                      values; the only version postlog decodes)
+  :proto-version      pgoutput protocol version, default 2
   :status-interval-ms standby status cadence, default 5000
-  :binary?            request binary tuple values (proto v2+; off)
+  :binary?            request binary tuple values (default true; pass
+                      false for text values — see
+                      ebifriedrice.postlog.decode for both layouts)
   :messages?          forward pg_logical_emit_message payloads
-                      (proto v2+; off)
 
-  Starts from the slot's own confirmed position; the server decides
-  where that is, which is what makes resume-on-restart work."
+  Binary is the default: scalars arrive in their typsend wire
+  layouts instead of text renderings, floats keep their bit patterns,
+  and timestamps skip a text round-trip.  Starts from the slot's own
+  confirmed position; the server decides where that is, which is what
+  makes resume-on-restart work."
   [^Connection conn {:keys [slot-name publications proto-version
                             status-interval-ms binary? messages?]}]
   (let [pubs (if (string? publications) [publications] publications)
@@ -72,7 +75,7 @@
                     (.logical)
                     (.withSlotName (str slot-name))
                     (.withStartPosition LogSequenceNumber/INVALID_LSN)
-                    (.withSlotOption "proto_version" (int (or proto-version 1)))
+                    (.withSlotOption "proto_version" (int (or proto-version 2)))
                     (.withSlotOption "publication_names" (str/join "," (map str pubs)))
                     (.withStatusInterval (int (or status-interval-ms 5000))
                                          TimeUnit/MILLISECONDS)
@@ -80,6 +83,6 @@
                     ;; flushed LSN past WAL we already explicitly confirmed,
                     ;; bridging idle stretches so the server can recycle WAL.
                     (.withAutomaticFlush true))
-        builder (if binary? (.withSlotOption builder "binary" true) builder)
+        builder (if (not= false binary?) (.withSlotOption builder "binary" true) builder)
         builder (if messages? (.withSlotOption builder "messages" true) builder)]
     (wrap-pg-stream (.start builder))))
