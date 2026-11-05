@@ -1,5 +1,6 @@
 {:paths ["src" "resources"]
- :deps {org.clojure/clojure {:mvn/version "1.12.6"}}
+ :deps {org.clojure/clojure {:mvn/version "1.12.6"}
+        org.postgresql/postgresql {:mvn/version "42.7.14"}}
  :aliases
  {:test
   {:extra-paths ["test"]
