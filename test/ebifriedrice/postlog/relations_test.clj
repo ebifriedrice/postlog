@@ -30,7 +30,7 @@
   (testing "resolving an unknown oid says so, with the known oids"
     (is (thrown-with-msg?
          clojure.lang.ExceptionInfo #"never announced"
-         (relations/resolve {} 999)))))
+         (relations/resolve-relation {} 999)))))
 
 (deftest shape-insert-test
   (is (= {:op :insert :schema "public" :table "users"

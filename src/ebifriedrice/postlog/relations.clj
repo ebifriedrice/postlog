@@ -26,7 +26,7 @@
     (assoc cache relation-id relation)
     cache))
 
-(defn resolve
+(defn resolve-relation
   "The cached relation for `relation-id`, or ex-info.  A stream is
   malformed if a change references a relation it never announced."
   [cache relation-id]
@@ -87,26 +87,26 @@
   ([cache change {:keys [value-decoder]}]
    (let [row* (fn [rel kind tuple] (row rel kind tuple value-decoder))]
      (case (:op change)
-       :insert (let [rel (resolve cache (:relation-id change))]
+       :insert (let [rel (resolve-relation cache (:relation-id change))]
                  {:op :insert
                   :schema (:schema rel)
                   :table (:table rel)
                   :after (row* rel :new (:tuple change))})
-       :update (let [rel (resolve cache (:relation-id change))]
+       :update (let [rel (resolve-relation cache (:relation-id change))]
                  {:op :update
                   :schema (:schema rel)
                   :table (:table rel)
                   :before (when-let [t (:before-tuple change)]
                             (row* rel (:before-kind change) t))
                   :after (row* rel :new (:tuple change))})
-       :delete (let [rel (resolve cache (:relation-id change))]
+       :delete (let [rel (resolve-relation cache (:relation-id change))]
                  {:op :delete
                   :schema (:schema rel)
                   :table (:table rel)
                   :before (row* rel (:before-kind change) (:before-tuple change))})
        :truncate {:op :truncate
                   :tables (mapv (fn [id]
-                                  (let [rel (resolve cache id)]
+                                  (let [rel (resolve-relation cache id)]
                                     (str (:schema rel) "." (:table rel))))
                                 (:relation-ids change))
                   :cascade? (:cascade? change)
