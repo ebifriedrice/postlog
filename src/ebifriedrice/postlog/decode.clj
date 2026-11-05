@@ -335,34 +335,72 @@
                   (.setScale dscale))
         (= sign 0x4000) .negate))))
 
+(defn- read-binary-elements
+  "Read length-prefixed elements — -1 marks NULL — decoding each with
+  its element type."
+  [^ByteBuffer b elem-oid]
+  (loop [elements []]
+    (if (.hasRemaining b)
+      (let [len (.getInt b)]
+        (recur (conj elements
+                     (when (not= -1 len)
+                       (let [bs (byte-array len)]
+                         (.get b bs)
+                         (decode-value elem-oid bs))))))
+      elements)))
+
+(defn- reshape-array
+  "Nest a flat element vector by the array's dimension lengths."
+  [dims flat]
+  (if (= 1 (count dims))
+    (vec flat)
+    (mapv (fn [chunk] (reshape-array (rest dims) chunk))
+          (partition (quot (count flat) (first dims)) flat))))
+
+(defn- parse-binary-array [^bytes bs]
+  (let [b (wrap bs)
+        ndim (.getInt b)
+        _hasnull (.getInt b) ; elements carry nulls as -1 lengths
+        elem-oid (bit-and (.getInt b) 0xFFFFFFFF)
+        dims (vec (repeatedly ndim
+                              (fn []
+                                (let [length (.getInt b)]
+                                  (.getInt b) ; lower bound, unused
+                                  length))))]
+    (reshape-array dims (read-binary-elements b elem-oid))))
+
 (def ^:private binary-decoders
   "OID -> parser for the binary wire layouts postlog understands.
   These are the typsend layouts, byte-verified identical on Postgres
   14 through 17.  timestamptz decodes to UTC: binary carries no zone
-  offset, unlike text output which renders in the server's."
-  {16 parse-binary-bool
-   17 identity                                 ; bytea: binary is the bytes
-   18 parse-binary-string                      ; "char"
-   19 parse-binary-string                      ; name
-   20 parse-binary-int8
-   21 parse-binary-int2
-   23 parse-binary-int4
-   25 parse-binary-string
-   26 parse-binary-oid
-   114 parse-binary-string                     ; json's binary is raw text
-   142 parse-binary-string                     ; xml
-   700 parse-binary-float4
-   701 parse-binary-float8
-   1042 parse-binary-string                    ; bpchar
-   1043 parse-binary-string                    ; varchar
-   1082 parse-binary-date
-   1083 parse-binary-time
-   1114 parse-binary-timestamp
-   1184 parse-binary-timestamptz
-   1266 parse-binary-timetz
-   2950 parse-binary-uuid
-   1700 parse-binary-numeric
-   3802 parse-binary-jsonb})
+  offset, unlike text output which renders in the server's.  Arrays
+  are self-describing — the header carries the element OID — so every
+  known array OID maps to the same parser."
+  (merge {16 parse-binary-bool
+          17 identity                                 ; bytea: binary is the bytes
+          18 parse-binary-string                      ; "char"
+          19 parse-binary-string                      ; name
+          20 parse-binary-int8
+          21 parse-binary-int2
+          23 parse-binary-int4
+          25 parse-binary-string
+          26 parse-binary-oid
+          114 parse-binary-string                     ; json's binary is raw text
+          142 parse-binary-string                     ; xml
+          700 parse-binary-float4
+          701 parse-binary-float8
+          1042 parse-binary-string                    ; bpchar
+          1043 parse-binary-string                    ; varchar
+          1082 parse-binary-date
+          1083 parse-binary-time
+          1114 parse-binary-timestamp
+          1184 parse-binary-timestamptz
+          1266 parse-binary-timetz
+          2950 parse-binary-uuid
+          1700 parse-binary-numeric
+          3802 parse-binary-jsonb}
+         (into {} (map (fn [[array-oid _]] [array-oid parse-binary-array]))
+               array-element-oids)))
 
 (defn decode-value
   "Decode one column `value` — text (string) or binary (bytes) — using

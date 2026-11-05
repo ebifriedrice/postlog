@@ -73,6 +73,41 @@
     (let [raw (ba 0x01 0x02)]
       (is (java.util.Arrays/equals raw (decode/decode-value 999999 raw))))))
 
+(defn- bin-arr
+  "Binary array wire bytes for `elem-oid`, dims, and raw elements
+  (nil = NULL).  Mirrors array_send: dims + lbound, then each element
+  as its length and payload interleaved, no null bitmap."
+  [elem-oid dims & elements]
+  (let [out (java.io.ByteArrayOutputStream.)]
+    (doseq [n (concat [(count dims)
+                       (if (some nil? elements) 1 0)
+                       elem-oid]
+                      (mapcat (fn [d] [d 1]) dims))]
+      (.write out ^bytes (i32 n)))
+    (doseq [e elements]
+      (if e
+        (do (.write out ^bytes (i32 (alength ^bytes e)))
+            (.write out ^bytes e))
+        (.write out ^bytes (i32 -1))))
+    (.toByteArray out)))
+
+(deftest binary-arrays-test
+  (testing "flat arrays with NULL holes decode element-wise"
+    (is (= [1 nil 3] (decode/decode-value 1007 (bin-arr 23 [3] (i32 1) nil (i32 3))))))
+  (testing "nesting follows the dimension lengths"
+    (is (= [[1 2] [3 4]]
+           (decode/decode-value 1007 (bin-arr 23 [2 2]
+                                      (i32 1) (i32 2) (i32 3) (i32 4))))))
+  (testing "the header's element oid drives decoding"
+    (is (= ["a" "b"] (decode/decode-value 1009
+                                          (bin-arr 25 [2]
+                                                   (.getBytes "a") (.getBytes "b")))))
+    (is (= [true false]
+           (decode/decode-value 1000 (bin-arr 16 [2] (ba 1) (ba 0))))))
+  (testing "unknown array types keep their bytes"
+    (let [raw (bin-arr 999999 [1] (ba 1 2))]
+      (is (java.util.Arrays/equals raw (decode/decode-value 999998 raw))))))
+
 (deftest numbers-test
   (testing "integers and oid become Longs, floats Doubles"
     (is (= 42 (decode/decode-value 23 "42")))
