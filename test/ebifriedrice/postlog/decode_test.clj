@@ -2,8 +2,76 @@
   (:require [clojure.test :refer [deftest is testing]]
             [ebifriedrice.postlog.decode :as decode]
             [ebifriedrice.postlog.pgoutput :as pg])
-  (:import (java.time LocalDate LocalDateTime LocalTime OffsetDateTime
+  (:import (java.nio ByteBuffer)
+           (java.time LocalDate LocalDateTime LocalTime OffsetDateTime
                       OffsetTime ZoneOffset)))
+
+(defn- ba
+  "Byte array from possibly out-of-range byte literals."
+  [& xs]
+  (byte-array (map unchecked-byte xs)))
+
+(defn- i16 [n] (let [b (ByteBuffer/allocate 2)] (.putShort b (unchecked-short n)) (.array b)))
+(defn- i32 [n] (let [b (ByteBuffer/allocate 4)] (.putInt b (unchecked-int n)) (.array b)))
+(defn- i64 [n] (let [b (ByteBuffer/allocate 8)] (.putLong b (long n)) (.array b)))
+
+(deftest binary-scalars-test
+  (testing "numbers decode from big-endian wire layouts"
+    (is (= 42 (decode/decode-value 23 (i32 42))))
+    (is (= -7 (decode/decode-value 21 (i16 -7))))
+    (is (= 9007199254740993 (decode/decode-value 20 (i64 9007199254740993))))
+    (is (= 12345 (decode/decode-value 26 (i32 12345))))
+    (is (= 1.5 (decode/decode-value 700 (i32 (Float/floatToIntBits 1.5)))))
+    (is (= 2.25 (decode/decode-value 701 (i64 (Double/doubleToLongBits 2.25)))))
+    (is (Double/isNaN (decode/decode-value 701 (i64 0x7FF8000000000000))))
+    (is (= ##Inf (decode/decode-value 701 (i64 0x7FF0000000000000)))))
+  (testing "bool, strings, json, bytea, uuid"
+    (is (true? (decode/decode-value 16 (ba 1))))
+    (is (false? (decode/decode-value 16 (ba 0))))
+    (is (= "hi" (decode/decode-value 25 (.getBytes "hi"))))
+    (is (= "{\"a\": 1}" (decode/decode-value 114 (.getBytes "{\"a\": 1}"))))
+    (is (= "{\"a\": 1}" (decode/decode-value 3802 (ba 0x01 0x7b 0x22 0x61 0x22
+                                                            0x3a 0x20 0x31 0x7d))))
+    (is (java.util.Arrays/equals (ba 0x00 0xff)
+                                 (decode/decode-value 17 (ba 0x00 0xff))))
+    (is (= "550e8400-e29b-41d4-a716-446655440000"
+           (decode/decode-value 2950 (ba 0x55 0x0e 0x84 0x00 0xe2 0x9b 0x41
+                                         0xd4 0xa7 0x16 0x44 0x66 0x55 0x44
+                                         0x00 0x00)))))
+  (testing "dates and times from epoch offsets"
+    (is (= (LocalDate/of 2026 11 5) (decode/decode-value 1082 (i32 9805))))
+    (is (= decode/infinity (decode/decode-value 1082 (i32 0x7FFFFFFF))))
+    (is (= decode/neg-infinity (decode/decode-value 1082 (i32 -0x80000000))))
+    (is (= (LocalTime/of 12 34 56 500000000)
+           (decode/decode-value 1083 (i64 45296500000))))
+    (is (= (OffsetTime/of (LocalTime/of 12 34 56) (ZoneOffset/ofHoursMinutes 1 30))
+           ;; zone is west-positive: +01:30 arrives as -5400
+           (decode/decode-value
+            1266 (byte-array (concat (i64 45296000000) (i32 -5400)))))))
+  (testing "timestamps decode to UTC from micros since 2000-01-01"
+    (is (= (LocalDateTime/of 2026 11 5 12 34 56)
+           (decode/decode-value 1114 (i64 0x0302857DE1FC00))))
+    (is (= (OffsetDateTime/of 2026 11 5 12 34 56 0 ZoneOffset/UTC)
+           (decode/decode-value 1184 (i64 0x0302857DE1FC00))))
+    (is (= decode/infinity (decode/decode-value 1184 (i64 Long/MAX_VALUE))))
+    (is (= decode/neg-infinity (decode/decode-value 1114 (i64 Long/MIN_VALUE)))))
+  (testing "numeric from ndigits/weight/sign/dscale and base-10000 digits"
+    (is (= 3.14M (decode/decode-value 1700 (ba 0x00 0x02 0x00 0x00 0x00 0x00
+                                                   0x00 0x02 0x00 0x03 0x05 0x78))))
+    (is (= -12.50M (decode/decode-value 1700 (ba 0x00 0x02 0x00 0x00 0x40 0x00
+                                                    0x00 0x02 0x00 0x0c 0x13 0x88))))
+    (is (Double/isNaN (decode/decode-value
+                       1700 (byte-array (concat (i16 0) (i16 0)
+                                                (i16 0xC000) (i16 0))))))
+    (is (= ##Inf (decode/decode-value
+                  1700 (byte-array (concat (i16 0) (i16 0)
+                                           (i16 0xD000) (i16 0))))))
+    (is (= ##-Inf (decode/decode-value
+                   1700 (byte-array (concat (i16 0) (i16 0)
+                                            (i16 0xF000) (i16 0)))))))
+  (testing "unknown binary types keep their bytes"
+    (let [raw (ba 0x01 0x02)]
+      (is (java.util.Arrays/equals raw (decode/decode-value 999999 raw))))))
 
 (deftest numbers-test
   (testing "integers and oid become Longs, floats Doubles"

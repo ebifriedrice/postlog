@@ -1,18 +1,29 @@
 (ns ebifriedrice.postlog.decode
-  "Decode the text-format column values pgoutput sends into Clojure
-  data, keyed by type OID.
+  "Decode the column values pgoutput sends into Clojure data, keyed by
+  type OID.
 
-  pgoutput renders every column as its text representation (``42``,
-  ``t``, ``2500.00``) and Relation messages name each column's type
-  only by OID, so decoding is an OID-keyed lookup.  Values of unknown
-  or custom types keep their raw text, and non-text values (NULL,
-  unchanged-TOAST markers) pass through untouched."
+  pgoutput renders columns in one of two formats per stream: every
+  column as its text representation (``42``, ``t``, ``2500.00``), or
+  with the protocol-v2 ``binary`` option, each type's binary wire form
+  (int4 as four big-endian bytes, timestamps as microseconds since
+  2000-01-01, and so on — the layouts Postgres' typsend functions
+  emit, verified identical on servers 14-17).  Relation messages name
+  each column's type only by OID, so both formats decode through an
+  OID-keyed lookup: [[decode-value]] dispatches on the value being a
+  string (text) or bytes (binary).
+
+  Values of unknown or custom types keep their raw text or bytes, and
+  other values (NULL, unchanged-TOAST markers) pass through
+  untouched."
   (:require [clojure.string :as str]
             [clojure.walk :as walk])
-  (:import (java.math BigDecimal)
-           (java.time LocalDate LocalDateTime LocalTime OffsetDateTime
-                      OffsetTime)
-           (java.time.format DateTimeParseException)))
+  (:import (java.math BigDecimal BigInteger)
+           (java.nio ByteBuffer)
+           (java.nio.charset StandardCharsets)
+           (java.time Instant LocalDate LocalDateTime LocalTime
+                      OffsetDateTime OffsetTime ZoneOffset)
+           (java.time.format DateTimeParseException)
+           (java.util UUID)))
 
 (def infinity
   "Marker for date and timestamp values Postgres renders as
@@ -225,12 +236,145 @@
                          [array-oid (partial decode-array element-oid)]))
                array-element-oids)))
 
+;; ---------------------------------------------------------------------------
+;; binary-format values (protocol v2's `binary` option)
+
+(def ^:private pg-epoch-day
+  "Days from 1970-01-01 to Postgres' 2000-01-01 epoch."
+  10957)
+
+(def ^:private pg-epoch-micros
+  "Microseconds from the Unix epoch to Postgres' 2000-01-01 epoch."
+  946684800000000)
+
+(def ^:private int32-max 0x7FFFFFFF)
+(def ^:private int32-min -0x80000000)
+(def ^:private int64-max Long/MAX_VALUE)
+(def ^:private int64-min Long/MIN_VALUE)
+
+(defn- wrap [^bytes bs]
+  (ByteBuffer/wrap bs))
+
+(defn- micros->instant [^long us]
+  (Instant/ofEpochSecond (quot us 1000000) (* (rem us 1000000) 1000)))
+
+(defn- parse-binary-int2 [^bytes bs] (.getShort (wrap bs)))
+(defn- parse-binary-int4 [^bytes bs] (.getInt (wrap bs)))
+(defn- parse-binary-int8 [^bytes bs] (.getLong (wrap bs)))
+(defn- parse-binary-oid  [^bytes bs] (bit-and (.getInt (wrap bs)) 0xFFFFFFFF))
+(defn- parse-binary-bool [^bytes bs] (= (aget bs 0) 1))
+(defn- parse-binary-float4 [^bytes bs] (Float/intBitsToFloat (.getInt (wrap bs))))
+(defn- parse-binary-float8 [^bytes bs] (Double/longBitsToDouble (.getLong (wrap bs))))
+(defn- parse-binary-string [^bytes bs] (String. bs StandardCharsets/UTF_8))
+
+(defn- parse-binary-uuid [^bytes bs]
+  (let [b (wrap bs)]
+    (str (UUID. (.getLong b) (.getLong b)))))
+
+(defn- parse-binary-jsonb [^bytes bs]
+  (if (and (pos? (alength bs)) (= (aget bs 0) 1))
+    (String. bs 1 (dec (alength bs)) StandardCharsets/UTF_8)
+    bs))
+
+(defn- parse-binary-date [^bytes bs]
+  (let [days (.getInt (wrap bs))]
+    (cond
+      (= days int32-max) infinity
+      (= days int32-min) neg-infinity
+      :else (LocalDate/ofEpochDay (+ pg-epoch-day days)))))
+
+(defn- parse-binary-time [^bytes bs]
+  (LocalTime/ofNanoOfDay (* (.getLong (wrap bs)) 1000)))
+
+(defn- parse-binary-timetz [^bytes bs]
+  (let [b (wrap bs)
+        micros (.getLong b)
+        ;; the zone is seconds *west* of UTC: +01:30 arrives as -5400
+        west-seconds (.getInt b)]
+    (OffsetTime/of (LocalTime/ofNanoOfDay (* micros 1000))
+                   (ZoneOffset/ofTotalSeconds (- west-seconds)))))
+
+(defn- parse-binary-timestamp [^bytes bs]
+  (let [us (.getLong (wrap bs))]
+    (cond
+      (= us int64-max) infinity
+      (= us int64-min) neg-infinity
+      :else (LocalDateTime/ofInstant (micros->instant (+ pg-epoch-micros us))
+                                     ZoneOffset/UTC))))
+
+(defn- parse-binary-timestamptz [^bytes bs]
+  (let [us (.getLong (wrap bs))]
+    (cond
+      (= us int64-max) infinity
+      (= us int64-min) neg-infinity
+      :else (OffsetDateTime/ofInstant (micros->instant (+ pg-epoch-micros us))
+                                      ZoneOffset/UTC))))
+
+;; numeric sign field: 0x0000 positive, 0x4000 negative, 0xC000 NaN,
+;; 0xD000/0xF000 the infinities
+(defn- parse-binary-numeric [^bytes bs]
+  (let [b (wrap bs)
+        ndigits (bit-and (.getShort b) 0xFFFF)
+        weight (.getShort b)
+        sign (bit-and (.getShort b) 0xFFFF)
+        dscale (bit-and (.getShort b) 0xFFFF)
+        digits (repeatedly ndigits #(bit-and (.getShort b) 0xFFFF))
+        ;; all digits as one base-10000 integer, then rescale:
+        ;; value = N * 10000 ^ (weight - ndigits + 1)
+        unscaled (reduce (fn [^BigInteger n d]
+                           (.add (.multiply n (BigInteger/valueOf 10000))
+                                 (BigInteger/valueOf (long d))))
+                         BigInteger/ZERO
+                         digits)]
+    (case sign
+      0xC000 ##NaN
+      0xD000 ##Inf
+      0xF000 ##-Inf
+      (cond-> (-> (BigDecimal. unscaled)
+                  (.scaleByPowerOfTen (* 4 (inc (- weight ndigits))))
+                  (.setScale dscale))
+        (= sign 0x4000) .negate))))
+
+(def ^:private binary-decoders
+  "OID -> parser for the binary wire layouts postlog understands.
+  These are the typsend layouts, byte-verified identical on Postgres
+  14 through 17.  timestamptz decodes to UTC: binary carries no zone
+  offset, unlike text output which renders in the server's."
+  {16 parse-binary-bool
+   17 identity                                 ; bytea: binary is the bytes
+   18 parse-binary-string                      ; "char"
+   19 parse-binary-string                      ; name
+   20 parse-binary-int8
+   21 parse-binary-int2
+   23 parse-binary-int4
+   25 parse-binary-string
+   26 parse-binary-oid
+   114 parse-binary-string                     ; json's binary is raw text
+   142 parse-binary-string                     ; xml
+   700 parse-binary-float4
+   701 parse-binary-float8
+   1042 parse-binary-string                    ; bpchar
+   1043 parse-binary-string                    ; varchar
+   1082 parse-binary-date
+   1083 parse-binary-time
+   1114 parse-binary-timestamp
+   1184 parse-binary-timestamptz
+   1266 parse-binary-timetz
+   2950 parse-binary-uuid
+   1700 parse-binary-numeric
+   3802 parse-binary-jsonb})
+
 (defn decode-value
-  "Decode one text-format `value` using its column's `type-oid`.
-  Non-string values pass through untouched; unknown OIDs keep the
-  raw text.  This is the function to hand a consumer as
-  ``:value-decoder``."
+  "Decode one column `value` — text (string) or binary (bytes) — using
+  its column's `type-oid`.  Non-string/non-bytes values pass through
+  untouched; unknown OIDs keep the raw text or bytes.  This is the
+  function to hand a consumer as ``:value-decoder``."
   [type-oid value]
-  (if (and (string? value) (contains? decoders type-oid))
-    ((get decoders type-oid) value)
-    value))
+  (cond
+    (string? value) (if-let [decode-fn (get decoders type-oid)]
+                      (decode-fn value)
+                      value)
+    (bytes? value) (if-let [decode-fn (get binary-decoders type-oid)]
+                     (decode-fn value)
+                     value)
+    :else value))
