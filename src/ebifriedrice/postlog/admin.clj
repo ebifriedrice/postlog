@@ -39,16 +39,26 @@
              (str "?" (str/join "&" (map (fn [[k v]] (str (name k) "=" v)) params))))))))
 
 (defn replication-jdbc-url
-  "Like [[jdbc-url]] but with ``replication=database``, the parameter
-  that turns a pgjdbc connection into a replication connection (the
-  stream APIs in ``ebifriedrice.postlog.replication`` need this)."
+  "Like [[jdbc-url]] but with the parameters that make a pgjdbc
+  connection a replication connection: ``replication=database`` and
+  ``assumeMinServerVersion=14``.  The version assumption is load
+  bearing: pgjdbc forwards the replication flag in the startup packet
+  only when it believes the server is at least 9.4, and without the
+  assumption the connection silently opens as a regular one whose
+  first replication command dies as a SQL syntax error.  postlog
+  supports Postgres 14+."
   [spec]
   (if (string? spec)
     (let [url (jdbc-url spec)]
-      (if (re-find #"[?&]replication=" url)
-        url
-        (str url (if (str/includes? url "?") "&" "?") "replication=database")))
-    (jdbc-url (assoc spec :replication "database"))))
+      (cond-> url
+        (not (re-find #"[?&]replication=" url))
+        (str (if (str/includes? url "?") "&" "?") "replication=database")
+
+        (not (re-find #"[?&]assumeMinServerVersion=" url))
+        (str "&assumeMinServerVersion=14")))
+    (jdbc-url (-> spec
+                  (assoc :replication "database")
+                  (update :assumeMinServerVersion #(or % "14"))))))
 
 (defn connect
   "Open a ``java.sql.Connection`` from a spec map or JDBC URL string.
