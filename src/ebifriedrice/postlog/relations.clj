@@ -41,8 +41,8 @@
   at full relation width -- pgoutput NULLs the non-identity columns
   -- so the key columns' positions are picked out of the full tuple.
   `value-decoder` (type-oid, value) -> value lets callers decode
-  typed column values; nil keeps whatever the decoder produced
-  upstream."
+  typed column values, text or binary; nil keeps whatever the
+  decoder produced upstream."
   [relation kind tuple value-decoder]
   (let [columns (:columns relation)
         positions (if (= :key kind)
@@ -57,7 +57,7 @@
                  (let [col (nth columns i)
                        v (nth tuple i)]
                    [(:name col)
-                    (if (and value-decoder (string? v))
+                    (if (and value-decoder (or (string? v) (bytes? v)))
                       (value-decoder (:type-oid col) v)
                       v)])))
           positions)))
@@ -78,10 +78,11 @@
   replica identity it holds key columns only.  TOASTed values the
   server skipped appear as [[pg/unchanged-toast]].  `opts`:
 
-  :value-decoder  fn of a column's type-oid and its text value,
-                  returning the decoded value; strings pass through
-                  when absent.  Non-string values (nil, TOAST
-                  markers) are never passed to it."
+  :value-decoder  fn of a column's type-oid and its raw value --
+                  text (string) or binary (bytes) depending on the
+                  stream's format -- returning the decoded value;
+                  raw values pass through when absent.  Other values
+                  (nil, TOAST markers) are never passed to it."
   ([cache change] (shape-change cache change nil))
   ([cache change {:keys [value-decoder]}]
    (let [row* (fn [rel kind tuple] (row rel kind tuple value-decoder))]

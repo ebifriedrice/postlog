@@ -74,6 +74,19 @@
           {:op :delete :relation-id 16385
            :before-kind :key :before-tuple ["1" nil nil]}))))
 
+(deftest value-decoder-test
+  (testing "binary values reach the value-decoder alongside text ones"
+    (is (= {:op :insert :schema "public" :table "users"
+            :after {"id" 7 "email" "x@y.io"}}
+           (relations/shape-change
+            cache
+            {:op :insert :relation-id 16385
+             :tuple [(byte-array [0 0 0 7]) "x@y.io"]}
+            {:value-decoder (fn [type-oid v]
+                              (if (and (= 23 type-oid) (bytes? v))
+                                (-> (java.nio.ByteBuffer/wrap v) (.getInt))
+                                v))})))))
+
 (deftest shape-truncate-test
   (is (= {:op :truncate :tables ["public.users"] :cascade? false :restart-identity? false}
          (relations/shape-change
