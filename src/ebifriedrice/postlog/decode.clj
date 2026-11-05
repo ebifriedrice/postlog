@@ -204,27 +204,26 @@
     (throw (ex-info "bytea text is not hex-escaped" {:text s}))))
 
 (def ^:private decoders
-  "OID -> parser for built-in scalar types with an obvious Clojure
-  equivalent."
-  {16 parse-bool
-   20 parse-long*     ; int8
-   21 parse-long*     ; int2
-   23 parse-long*     ; int4
-   26 parse-long*     ; oid
-   700 parse-double*  ; float4
-   701 parse-double*  ; float8
-   17 parse-bytea
-   1082 (partial parse-temporal LocalDate/parse)  ; date
-   1083 (partial parse-or-raw LocalTime/parse)    ; time
-   1114 parse-timestamp                           ; timestamp
-   1184 parse-timestamptz                         ; timestamptz
-   1266 parse-timetz                              ; time with time zone
-   1700 parse-numeric}
-  ;; built-in arrays decode by parsing the literal then decoding
-  ;; each element with its element type
-  (into {} (map (fn [[array-oid element-oid]]
-                  [array-oid (partial decode-array element-oid)]))
-        array-element-oids))
+  "OID -> parser for built-in types with an obvious Clojure
+  equivalent; array types parse their literal, then decode each
+  element with the element type's parser."
+  (merge {16 parse-bool
+          17 parse-bytea
+          20 parse-long*                              ; int8
+          21 parse-long*                              ; int2
+          23 parse-long*                              ; int4
+          26 parse-long*                              ; oid
+          700 parse-double*                           ; float4
+          701 parse-double*                           ; float8
+          1082 (partial parse-temporal LocalDate/parse)  ; date
+          1083 (partial parse-or-raw LocalTime/parse)    ; time
+          1114 parse-timestamp                           ; timestamp
+          1184 parse-timestamptz                         ; timestamptz
+          1266 parse-timetz                              ; time with time zone
+          1700 parse-numeric}
+         (into {} (map (fn [[array-oid element-oid]]
+                         [array-oid (partial decode-array element-oid)]))
+               array-element-oids)))
 
 (defn decode-value
   "Decode one text-format `value` using its column's `type-oid`.
