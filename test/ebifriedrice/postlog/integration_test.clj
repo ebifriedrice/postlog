@@ -171,7 +171,7 @@
 (defn- insert-raw!
   [id label]
   (exec! (str "INSERT INTO " table " VALUES (?, ?, true, "
-              "'2026-11-05 12:34:56+00', '{a,b}')")
+              "'2026-11-05 12:34:56+00', '{a,b}', 2500.50, '{\"k\": 1}')")
          (long id) label))
 
 (defn- stop-and-await! [c]
@@ -199,7 +199,9 @@
                       " label text,"
                       " active boolean,"
                       " created_at timestamptz,"
-                      " tags text[])"))
+                      " tags text[],"
+                      " score numeric,"
+                      " meta jsonb)"))
           (try
             (f)
             (finally
@@ -213,7 +215,8 @@
           [c changes] (start-consumer! slot pub)]
       (try
         (exec! (str "INSERT INTO " table
-                    " VALUES (1, 'first', true, '2026-11-05 12:34:56+00', '{a,b}')"))
+                    " VALUES (1, 'first', true, '2026-11-05 12:34:56+00',"
+                    " '{a,b}', 2500.50, '{\"k\": 1}')"))
         (exec! (str "UPDATE " table " SET label = 'renamed' WHERE id = 1"))
         (exec! (str "DELETE FROM " table " WHERE id = 1"))
         (exec! (str "TRUNCATE " table))
@@ -231,6 +234,8 @@
           (is (= "first" (get-in insert [:after "label"])))
           (is (true? (get-in insert [:after "active"])))
           (is (= ["a" "b"] (get-in insert [:after "tags"])))
+          (is (= 2500.50M (get-in insert [:after "score"])))
+          (is (= "{\"k\": 1}" (get-in insert [:after "meta"])))
           (is (= created-at-instant
                  (.. ^OffsetDateTime (get-in insert [:after "created_at"])
                      toInstant))))
@@ -321,4 +326,34 @@
             "postlog leaves caller connections open")
         (finally
           (dorun (map (fn [^Connection conn] (.close conn)) @conns))
+          (cleanup! slot pub))))))
+
+(deftest text-mode-test
+  (testing ":binary? false streams text values that decode identically"
+    (let [slot (unique-name "text") pub (unique-name "text")
+          _ (bootstrap-objects! slot pub)
+          changes (atom [])
+          c (consumer/start!
+             {:db db-spec
+              :slot-name slot
+              :publication-name pub
+              :tables [table]
+              :binary? false
+              :value-decoder decode/decode-value
+              :poll-interval-ms 10
+              :on-change (fn [change] (swap! changes conj change))})]
+      (try
+        (insert-raw! 60 "text-mode")
+        (is (wait-for #(seq (changes-for changes 60)) 10000))
+        (stop-and-await! c)
+        (let [after (get-in (first (changes-for changes 60)) [:after])]
+          (is (= 60 (get after "id")))
+          (is (= ["a" "b"] (get after "tags")))
+          (is (= 2500.50M (get after "score")))
+          (is (= "{\"k\": 1}" (get after "meta")))
+          (is (= created-at-instant
+                 (.. ^OffsetDateTime (get after "created_at") toInstant)))
+          (is (every? (complement bytes?) (vals after))
+              "text mode leaves no raw byte values"))
+        (finally
           (cleanup! slot pub))))))
