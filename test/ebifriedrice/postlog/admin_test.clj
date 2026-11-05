@@ -6,17 +6,21 @@
   (testing "maps become URLs, defaults fill host and port"
     (is (= "jdbc:postgresql://localhost:5432/app"
            (admin/jdbc-url {:database "app"})))
-    (is (= "jdbc:postgresql://db.example:5433/app?socketTimeout=10&replication=database"
+    (is (= "jdbc:postgresql://db.example:5433/app?socketTimeout=10&replication=database&assumeMinServerVersion=14"
            (admin/replication-jdbc-url
             {:host "db.example" :port 5433 :database "app" :socketTimeout 10}))))
   (testing "strings pass through; replication url appends without clobbering"
     (is (= "jdbc:postgresql://h/db" (admin/jdbc-url "jdbc:postgresql://h/db")))
-    (is (= "jdbc:postgresql://h/db?replication=database"
+    (is (= "jdbc:postgresql://h/db?replication=database&assumeMinServerVersion=14"
            (admin/replication-jdbc-url "jdbc:postgresql://h/db")))
-    (is (= "jdbc:postgresql://h/db?x=1&replication=database"
+    (is (= "jdbc:postgresql://h/db?x=1&replication=database&assumeMinServerVersion=14"
            (admin/replication-jdbc-url "jdbc:postgresql://h/db?x=1")))
-    (is (= "jdbc:postgresql://h/db?replication=database"
-           (admin/replication-jdbc-url "jdbc:postgresql://h/db?replication=database")))))
+    (is (= "jdbc:postgresql://h/db?replication=database&assumeMinServerVersion=14"
+           (admin/replication-jdbc-url "jdbc:postgresql://h/db?replication=database")))
+    (is (= "jdbc:postgresql://h/db?replication=database&assumeMinServerVersion=15"
+           (admin/replication-jdbc-url
+            "jdbc:postgresql://h/db?replication=database&assumeMinServerVersion=15"))
+        "a caller's version assumption wins")))
 
 (deftest publication-ddl-test
   (testing "table list, default ops"
