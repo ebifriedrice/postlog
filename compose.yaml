@@ -1,0 +1,28 @@
+# Throwaway Postgres for postlog's integration tests.
+#
+#   docker compose up -d --wait     # start
+#   docker compose down -v          # stop and wipe
+#
+# The integration suite (test/ebifriedrice/postlog/integration_test.clj)
+# starts this itself when no docker daemon is reachable it falls back to
+# rootless podman with the same settings, and POSTLOG_TEST_* env vars
+# point the suite at an existing server instead.
+services:
+  postgres:
+    image: postgres:17
+    container_name: postlog-it-pg
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
+    # wal_level is start-level only, so it must ride the command line
+    command:
+      - postgres
+      - -c
+      - wal_level=logical
+      - -c
+      - max_replication_slots=10
+      - -c
+      - max_wal_senders=10
+    ports:
+      - "55432:5432"
