@@ -44,6 +44,78 @@
   [s]
   (str/replace s #"[+-]\d{2}$" "$0:00"))
 
+(defn- char-at
+  "Char at `i`, or nil past the end."
+  [^String s i]
+  (when (< i (.length s))
+    (.charAt s i)))
+
+(defn- malformed [^String s]
+  (throw (ex-info "Malformed array literal" {:text s})))
+
+(defn- read-quoted
+  "Read a quoted element body starting after the opening quote.
+  Backslash escapes and doubled quotes become literal characters.
+  Returns [text index-after-closing-quote]."
+  [^String s start]
+  (loop [sb (StringBuilder.), i start]
+    (if-let [c (char-at s i)]
+      (cond
+        (= c \\) (if-let [esc (char-at s (inc i))]
+                   (recur (doto sb (.append esc)) (+ i 2))
+                   (malformed s))
+        (= c \") (if (= (char-at s (inc i)) \")
+                  (recur (doto sb (.append \")) (+ i 2))
+                  [(str sb) (inc i)])
+        :else (recur (doto sb (.append c)) (inc i)))
+      (malformed s))))
+
+(defn- read-bare
+  "Read an unquoted element: up to the delimiter, trimmed, with an
+  unquoted NULL read as nil.  Returns [text next-index]."
+  [^String s start]
+  (let [end (some (fn [i] (when (contains? #{\, \}} (char-at s i)) i))
+                  (range start (inc (.length s))))]
+    (if end
+      (let [token (str/trim (subs s start end))]
+        [(if (= "NULL" token) nil token) end])
+      (malformed s))))
+
+(defn- array-element
+  [^String s i]
+  (if (= (char-at s i) \")
+    (read-quoted s (inc i))
+    (read-bare s i)))
+
+(defn- read-array-body
+  "Read elements after an opening brace.  Returns [elements
+  index-after-closing-brace]."
+  [^String s start]
+  (loop [elems [], i start]
+    (if-let [c (char-at s i)]
+      (condp = c
+        \} [elems (inc i)]
+        \, (recur elems (inc i))
+        \{ (let [[nested i'] (read-array-body s (inc i))]
+             (recur (conj elems nested) i'))
+        (let [[element i'] (array-element s i)]
+          (recur (conj elems element) i')))
+      (malformed s))))
+
+(defn parse-array-literal
+  "Parse an array's text form into nested vectors of strings and
+  nils (unquoted NULL); typed decoding maps over the result."
+  [^String s]
+  (when-not (and (pos? (.length s)) (= \{ (.charAt s 0)))
+    (throw (ex-info "Not an array literal" {:text s})))
+  (try
+    (let [[elements end] (read-array-body s 1)]
+      (if (= end (.length s))
+        elements
+        (throw (ex-info "Trailing characters after array" {:text s}))))
+    (catch IndexOutOfBoundsException _
+      (throw (ex-info "Malformed array literal" {:text s})))))
+
 (defn- parse-timetz [s]
   (parse-or-raw OffsetTime/parse (pad-offset s)))
 

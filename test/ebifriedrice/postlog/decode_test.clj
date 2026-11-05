@@ -72,6 +72,31 @@
            (decode/decode-value 1184 "2026-11-05 12:34:56+00"))))
   (is (= decode/neg-infinity (decode/decode-value 1184 "-infinity"))))
 
+(deftest array-literal-test
+  (testing "flat arrays of bare tokens"
+    (is (= ["1" "2" "3"] (decode/parse-array-literal "{1,2,3}")))
+    (is (= [] (decode/parse-array-literal "{}"))))
+  (testing "quoting, commas, escapes, and NULL"
+    (is (= ["a b" "c,d"] (decode/parse-array-literal "{\"a b\",\"c,d\"}")))
+    (is (= ["with \"quote\"" "back\\slash"]
+           (decode/parse-array-literal "{\"with \\\"quote\\\"\",\"back\\\\slash\"}")))
+    (is (= [nil "NULL" ""] (decode/parse-array-literal "{NULL,\"NULL\",\"\"}"))))
+  (testing "nesting"
+    (is (= [["1" "2"] ["3" "4"]]
+           (decode/parse-array-literal "{{1,2},{3,4}}"))
+        "two dimensions")
+    (is (= [["a" nil] ["b" "c"]]
+           (decode/parse-array-literal "{{a,NULL},{b,c}}"))))
+  (testing "unquoted tokens trim whitespace"
+    (is (= ["1" "2"] (decode/parse-array-literal "{ 1 , 2 }"))))
+  (testing "malformed literals fail loudly"
+    (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Not an array"
+                          (decode/parse-array-literal "1,2")))
+    (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Malformed"
+                          (decode/parse-array-literal "{\"unterminated")))
+    (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Trailing"
+                          (decode/parse-array-literal "{1,2}x")))))
+
 (deftest passthrough-test
   (testing "unknown OIDs keep their raw text"
     (is (= "hello" (decode/decode-value 999999 "hello"))))
