@@ -20,7 +20,7 @@
   opts)
 
 (defn- pom-template [version]
-  [[:description "FIXME: my new library."]
+  [[:description "Postgres logical replication consumer for Clojure"]
    [:url "https://github.com/ebifriedrice/postlog"]
    [:licenses
     [:license
