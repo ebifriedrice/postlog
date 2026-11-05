@@ -36,14 +36,16 @@
     [:tag (str "v" version)]]])
 
 (defn- jar-opts [opts]
-  (assoc opts
-          :lib lib   :version version
-          :jar-file  (format "target/%s-%s.jar" lib version)
-          :basis     (b/create-basis {})
-          :class-dir class-dir
-          :target    "target"
-          :src-dirs  ["src"]
-          :pom-data  (pom-template version)))
+  (let [version (or (:version opts) version)]
+    (assoc opts
+           :lib lib
+           :version version
+           :jar-file (format "target/%s-%s.jar" lib version)
+           :basis (b/create-basis {})
+           :class-dir class-dir
+           :target "target"
+           :src-dirs ["src"]
+           :pom-data (pom-template version))))
 
 (defn ci "Run the CI pipeline of tests (and build the JAR)." [opts]
   (test opts)
