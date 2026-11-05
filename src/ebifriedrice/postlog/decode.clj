@@ -7,7 +7,8 @@
   only by OID, so decoding is an OID-keyed lookup.  Values of unknown
   or custom types keep their raw text, and non-text values (NULL,
   unchanged-TOAST markers) pass through untouched."
-  (:require [clojure.string :as str])
+  (:require [clojure.string :as str]
+            [clojure.walk :as walk])
   (:import (java.math BigDecimal)
            (java.time LocalDate LocalDateTime LocalTime OffsetDateTime
                       OffsetTime)
@@ -116,6 +117,41 @@
     (catch IndexOutOfBoundsException _
       (throw (ex-info "Malformed array literal" {:text s})))))
 
+(def ^:private array-element-oids
+  "Array type OID -> element type OID, for the built-in arrays.
+  Arrays of the text-family types are here too: their elements keep
+  their text, but the literal's quoting and NULLs still get parsed."
+  {1000 16     ; _bool
+   1001 17     ; _bytea
+   1005 21     ; _int2
+   1007 23     ; _int4
+   1009 25     ; _text
+   1014 1042   ; _bpchar
+   1015 1043   ; _varchar
+   1016 20     ; _int8
+   1021 700    ; _float4
+   1022 701    ; _float8
+   1028 26     ; _oid
+   1115 1114   ; _timestamp
+   1182 1082   ; _date
+   1183 1083   ; _time
+   1185 1184   ; _timestamptz
+   1231 1700   ; _numeric
+   1270 1266   ; _timetz
+   199 114     ; _json
+   2951 2950   ; _uuid
+   3807 3802   ; _jsonb
+   })
+
+(declare decode-value)
+
+(defn- decode-array
+  "Decode each element of a parsed array literal with its element
+  type's decoder."
+  [element-oid s]
+  (let [element #(if (string? %) (decode-value element-oid %) %)]
+    (walk/postwalk element (parse-array-literal s))))
+
 (defn- parse-timetz [s]
   (parse-or-raw OffsetTime/parse (pad-offset s)))
 
@@ -183,7 +219,12 @@
    1114 parse-timestamp                           ; timestamp
    1184 parse-timestamptz                         ; timestamptz
    1266 parse-timetz                              ; time with time zone
-   1700 parse-numeric})
+   1700 parse-numeric}
+  ;; built-in arrays decode by parsing the literal then decoding
+  ;; each element with its element type
+  (into {} (map (fn [[array-oid element-oid]]
+                  [array-oid (partial decode-array element-oid)]))
+        array-element-oids))
 
 (defn decode-value
   "Decode one text-format `value` using its column's `type-oid`.

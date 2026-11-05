@@ -97,6 +97,28 @@
     (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Trailing"
                           (decode/parse-array-literal "{1,2}x")))))
 
+(deftest typed-array-test
+  (testing "built-in arrays decode element-wise"
+    (is (= [1 2 3] (decode/decode-value 1007 "{1,2,3}")))
+    (is (= [[1 2] [3 4]] (decode/decode-value 1007 "{{1,2},{3,4}}")))
+    (is (= [nil 2] (decode/decode-value 1007 "{NULL,2}")))
+    (is (= [true false] (decode/decode-value 1000 "{t,f}")))
+    (is (= [2500.00M] (decode/decode-value 1231 "{2500.00}")))
+    (is (= [(LocalDate/of 2026 11 5)] (decode/decode-value 1182 "{2026-11-05}")))
+    (is (= [(OffsetDateTime/of 2026 11 5 12 34 56 0 ZoneOffset/UTC)]
+           (decode/decode-value 1185 "{2026-11-05 12:34:56+00}"))))
+  (testing "text-family arrays parse structure, elements stay text"
+    (is (= ["a b" "c,d"] (decode/decode-value 1009 "{\"a b\",\"c,d\"}")))
+    (is (= ["550e8400-e29b-41d4-a716-446655440000" nil]
+           (decode/decode-value 2951 "{550e8400-e29b-41d4-a716-446655440000,NULL}"))))
+  (testing "bytea arrays hold byte arrays"
+    (let [arr (decode/decode-value 1001 "{\\x4869,\\x21}")]
+      (is (= 2 (count arr)))
+      (is (java.util.Arrays/equals (byte-array [0x48 0x69]) (first arr)))
+      (is (java.util.Arrays/equals (byte-array [0x21]) (second arr)))))
+  (testing "unknown array types keep the raw literal"
+    (is (= "{x,y}" (decode/decode-value 999999 "{x,y}")))))
+
 (deftest passthrough-test
   (testing "unknown OIDs keep their raw text"
     (is (= "hello" (decode/decode-value 999999 "hello"))))
