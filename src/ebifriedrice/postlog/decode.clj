@@ -9,7 +9,8 @@
   unchanged-TOAST markers) pass through untouched."
   (:require [clojure.string :as str])
   (:import (java.math BigDecimal)
-           (java.time LocalDate LocalTime OffsetTime)
+           (java.time LocalDate LocalDateTime LocalTime OffsetDateTime
+                      OffsetTime)
            (java.time.format DateTimeParseException)))
 
 (def infinity
@@ -45,6 +46,21 @@
 
 (defn- parse-timetz [s]
   (parse-or-raw OffsetTime/parse (pad-offset s)))
+
+(defn- iso-space->t
+  "java.time wants a T where Postgres prints a space."
+  [s]
+  (str/replace-first s " " "T"))
+
+(defn parse-timestamp
+  "Timestamp without time zone -> LocalDateTime."
+  [s]
+  (parse-temporal (comp LocalDateTime/parse iso-space->t) s))
+
+(defn parse-timestamptz
+  "Timestamp with time zone -> OffsetDateTime."
+  [s]
+  (parse-temporal (comp OffsetDateTime/parse pad-offset iso-space->t) s))
 
 (defn- parse-long* [^String s]
   (Long/parseLong s))
@@ -92,6 +108,8 @@
    17 parse-bytea
    1082 (partial parse-temporal LocalDate/parse)  ; date
    1083 (partial parse-or-raw LocalTime/parse)    ; time
+   1114 parse-timestamp                           ; timestamp
+   1184 parse-timestamptz                         ; timestamptz
    1266 parse-timetz                              ; time with time zone
    1700 parse-numeric})
 

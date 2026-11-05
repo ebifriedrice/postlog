@@ -2,7 +2,8 @@
   (:require [clojure.test :refer [deftest is testing]]
             [ebifriedrice.postlog.decode :as decode]
             [ebifriedrice.postlog.pgoutput :as pg])
-  (:import (java.time LocalDate LocalTime OffsetTime ZoneOffset)))
+  (:import (java.time LocalDate LocalDateTime LocalTime OffsetDateTime
+                      OffsetTime ZoneOffset)))
 
 (deftest numbers-test
   (testing "integers and oid become Longs, floats Doubles"
@@ -55,6 +56,21 @@
   (testing "hour-only offsets gain minutes"
     (is (= (OffsetTime/of (LocalTime/of 12 34 56) (ZoneOffset/ofHours 1))
            (decode/decode-value 1266 "12:34:56+01")))))
+
+(deftest timestamp-test
+  (is (= (LocalDateTime/of 2026 11 5 12 34 56)
+         (decode/decode-value 1114 "2026-11-05 12:34:56")))
+  (is (= (LocalDateTime/of 2026 11 5 12 34 56 (* 789012 1000))
+         (decode/decode-value 1114 "2026-11-05 12:34:56.789012")))
+  (is (= decode/infinity (decode/decode-value 1114 "infinity"))))
+
+(deftest timestamptz-test
+  (is (= (OffsetDateTime/of 2026 11 5 12 34 56 0 (ZoneOffset/ofHoursMinutes 1 30))
+         (decode/decode-value 1184 "2026-11-05 12:34:56+01:30")))
+  (testing "hour-only offsets gain minutes"
+    (is (= (OffsetDateTime/of 2026 11 5 12 34 56 0 ZoneOffset/UTC)
+           (decode/decode-value 1184 "2026-11-05 12:34:56+00"))))
+  (is (= decode/neg-infinity (decode/decode-value 1184 "-infinity"))))
 
 (deftest passthrough-test
   (testing "unknown OIDs keep their raw text"
