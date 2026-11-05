@@ -37,7 +37,13 @@
              the slot and publication must already exist.
 
   :stream-fn  test escape hatch (fn [] LogicalStream); bypasses
-             connection handling entirely.
+              connection handling entirely.
+
+  :binary?    stream values in the binary wire format (default
+              true); false selects text.  decode/decode-value
+              decodes both, so the choice matters mainly for custom
+              value-decoders and for unknown types, which pass
+              through as raw bytes (binary) or raw text (text).
 
   Handlers run on the consumer's single thread, one at a time --
   that is what keeps ordering and provides backpressure.  Handler
@@ -61,7 +67,8 @@
    :status-interval-ms 5000
    :retry {:retries 8 :base-ms 100}
    :ensure-slot? true
-   :ensure-publication? true})
+   :ensure-publication? true
+   :binary? true})
 
 (def ^:private max-backoff-ms 60000)
 
@@ -226,7 +233,9 @@
   [opts]
   (let [stream-opts {:slot-name (:slot-name opts)
                      :publications (:publication-name opts)
-                     :status-interval-ms (:status-interval-ms opts)}]
+                     :status-interval-ms (:status-interval-ms opts)
+                     :binary? (:binary? opts)
+                     :proto-version (:proto-version opts)}]
     (cond
       (:stream-fn opts)
       (fn [] {:stream ((:stream-fn opts)) :close #()})
