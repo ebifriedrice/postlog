@@ -1,31 +1,8 @@
 (ns ebifriedrice.postlog.pgoutput-test
-  "Tests build pgoutput messages as flat tagged segments so the byte
-  fixtures stay readable and self-sizing."
   (:require [clojure.test :refer [deftest is testing]]
+            [ebifriedrice.postlog.bytes :refer [msg text-col utf8]]
             [ebifriedrice.postlog.pgoutput :as pg])
-  (:import (java.io ByteArrayOutputStream DataOutputStream)
-           (java.nio.charset StandardCharsets)
-           (java.time Instant)))
-
-(defn- msg
-  "Encode segments to bytes: [:b byte] [:w int16] [:i int32] [:l int64]
-  [:s cstring] [:raw byte-array].  A segment may itself be a vector of
-  segments (one level of nesting), which keeps helpers like text-col
-  readable at call sites."
-  [& segments]
-  (let [baos (ByteArrayOutputStream.)]
-    (with-open [out (DataOutputStream. baos)]
-      (doseq [segment segments
-              [tag value] (if (vector? (second segment)) segment [segment])]
-        (case tag
-          :b (.writeByte out (long value))
-          :w (.writeShort out (long value))
-          :i (.writeInt out (unchecked-int value))
-          :l (.writeLong out (long value))
-          :s (do (.write out (.getBytes (str value) StandardCharsets/UTF_8))
-                 (.write out 0))
-          :raw (.write out ^bytes value))))
-    (.toByteArray baos)))
+  (:import (java.time Instant)))
 
 (def pg-epoch-sec 946684800) ; 2000-01-01T00:00Z
 
@@ -68,7 +45,7 @@
             :prefix "myapp"
             :content "hi"}
            (pg/decode (msg [:b \M] [:b 1] [:l 55] [:s "myapp"]
-                           [:i 2] [:raw (.getBytes "hi" StandardCharsets/UTF_8)]))))))
+                           [:i 2] [:raw (utf8 "hi")]))))))
 
 (deftest relation-test
   (testing "Relation describes a table: oid, name, replica identity, columns"
@@ -115,13 +92,6 @@
             :restart-identity? false
             :relation-ids [16385]}
            (pg/decode (msg [:b \T] [:i 1] [:b 0] [:i 16385]))))))
-
-(defn- utf8 [s] (.getBytes s StandardCharsets/UTF_8))
-
-(defn- text-col
-  "Segments encoding one TupleData text column."
-  [s]
-  [[:b \t] [:i (alength (utf8 s))] [:raw (utf8 s)]])
 
 (deftest insert-test
   (testing "Insert carries the new tuple: text, null, toast, binary values"
